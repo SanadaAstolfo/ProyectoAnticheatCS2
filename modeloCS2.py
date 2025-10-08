@@ -79,12 +79,17 @@ train_idx, test_idx = next(gss.split(X, y, groups))
 X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
 y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
 
-print("\nPaso 4: Escalando características...", flush=True)
+print("\nPaso 4: Calculando pesos de clase...", flush=True)
+weights = class_weight.compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+class_weights = dict(enumerate(weights))
+print(f"Pesos de clase calculados: {class_weights}", flush=True)
+
+print("\nPaso 5: Escalando características...", flush=True)
 scaler = MinMaxScaler()
 X_train_scaled = scaler.fit_transform(X_train).astype('float32')
 X_test_scaled = scaler.transform(X_test).astype('float32')
 
-print("\nPaso 5: Preparando generadores de datos...", flush=True)
+print("\nPaso 6: Preparando generadores de datos...", flush=True)
 TIME_STEPS = 32
 BATCH_SIZE = 256
 
@@ -111,11 +116,7 @@ print("Liberando memoria...", flush=True)
 del df, df_cleaned, X, y, X_train, X_test, y_train, y_test, X_train_scaled, X_test_scaled
 gc.collect()
 
-print("\nPaso 6: Construyendo arquitectura...", flush=True)
-weights = class_weight.compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
-class_weights = dict(enumerate(weights))
-print(f"Pesos de clase calculados: {class_weights}", flush=True)
-
+print("\nPaso 7: Construyendo arquitectura...", flush=True)
 model = Sequential([
     Conv1D(filters=64, kernel_size=5, activation='relu', input_shape=(TIME_STEPS, train_generator.X.shape[1])),
     MaxPooling1D(pool_size=2), Dropout(0.3), GRU(units=50), Dropout(0.3),
@@ -124,13 +125,13 @@ model = Sequential([
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 model.summary()
 
-print("\nPaso 7: Entrenando el modelo...", flush=True)
+print("\nPaso 8: Entrenando el modelo...", flush=True)
 history = model.fit(train_generator, epochs=10, validation_data=validation_generator, class_weight=class_weights, verbose=1)
 print("¡Entrenamiento completado!", flush=True)
 model.save('anticheat_model_final.keras')
 print("Modelo guardado.", flush=True)
 
-print("\nPaso 8: Evaluando el rendimiento...", flush=True)
+print("\nPaso 9: Evaluando el rendimiento...", flush=True)
 y_pred_prob = model.predict(validation_generator)
 
 y_true = []
@@ -161,7 +162,7 @@ plt.ylabel('Tasa de Verdaderos Positivos')
 plt.title('Curva ROC del Modelo Final')
 plt.legend()
 plt.grid()
-plt.savefig('curva_roc_final.png')
+plt.savefig('curva_roc.png')
 plt.close()
 print("Curva ROC guardada.", flush=True)
 
