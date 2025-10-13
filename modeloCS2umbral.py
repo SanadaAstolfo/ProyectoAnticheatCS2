@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-print("--- Iniciando Proceso ---", flush=True)
+print("--- Iniciando Proceso Definitivo con Calibración ---", flush=True)
 try:
     df = pd.read_csv('subset_cs2cd.csv', low_memory=False)
     print(f"Paso 1: Dataset cargado. Forma: {df.shape}", flush=True)
@@ -66,6 +66,7 @@ columnas_numericas = df_cleaned.select_dtypes(include=np.number).columns
 for col in columnas_numericas:
     if df_cleaned[col].isnull().any():
         df_cleaned[col] = df_cleaned[col].fillna(df_cleaned[col].median())
+        
 print(f"Limpieza finalizada en {time.time() - start_time:.2f} segundos.", flush=True)
 
 print("\nPaso 3: Dividiendo datos por jugador...", flush=True)
@@ -92,7 +93,6 @@ X_test_scaled = scaler.transform(X_test).astype('float32')
 print("\nPaso 6: Preparando generadores de datos...", flush=True)
 TIME_STEPS = 32
 BATCH_SIZE = 256
-
 class DataGenerator(tf.keras.utils.Sequence):
     def __init__(self, X_data, y_data, time_steps, batch_size):
         self.X, self.y, self.time_steps, self.batch_size = X_data, y_data, time_steps, batch_size
@@ -116,7 +116,7 @@ print("Liberando memoria...", flush=True)
 del df, df_cleaned, X, y, X_train, X_test, y_train, y_test, X_train_scaled, X_test_scaled
 gc.collect()
 
-print("\nPaso 7: Construyendo arquitectura...", flush=True)
+print("\nPaso 8: Construyendo arquitectura...", flush=True)
 model = Sequential([
     Conv1D(filters=64, kernel_size=5, activation='relu', input_shape=(TIME_STEPS, train_generator.X.shape[1])),
     MaxPooling1D(pool_size=2), Dropout(0.3), GRU(units=50), Dropout(0.3),
@@ -131,55 +131,73 @@ print("¡Entrenamiento completado!", flush=True)
 model.save('anticheat_model_final.keras')
 print("Modelo guardado.", flush=True)
 
-print("\nPaso 9: Evaluando el rendimiento...", flush=True)
+print("\nPaso 9: Evaluando el rendimiento del modelo...", flush=True)
 y_pred_prob = model.predict(validation_generator)
-
 y_true = []
 for i in range(len(validation_generator)):
     _, y_batch = validation_generator[i]
     y_true.extend(y_batch)
 y_true = np.array(y_true)
-y_pred = (y_pred_prob[:len(y_true)] > 0.8).astype(int)
+y_pred_prob_matched = y_pred_prob[:len(y_true)]
 
-print("\n--- Reporte de Clasificación ---", flush=True)
-print(classification_report(y_true, y_pred, target_names=['Legítimo (0)', 'Tramposo (1)']))
+print("\n--- Reporte de Clasificación (Umbral 0.5) ---", flush=True)
+y_pred_default = (y_pred_prob_matched > 0.5).astype(int)
+print(classification_report(y_true, y_pred_default, target_names=['Legítimo (0)', 'Tramposo (1)']))
 
-cm = confusion_matrix(y_true, y_pred)
-print("\n--- Matriz de Confusión ---", flush=True)
-print(f"Real Legítimo: {cm[0][0]:>7d} | {cm[0][1]:>8d}", flush=True)
-print(f"Real Tramposo: {cm[1][0]:>7d} | {cm[1][1]:>8d}", flush=True)
+cm_default = confusion_matrix(y_true, y_pred_default)
+print("\n--- Matriz de Confusión (Umbral 0.5) ---", flush=True)
+print(f"Real Legítimo: {cm_default[0][0]:>7d} | {cm_default[0][1]:>8d}", flush=True)
+print(f"Real Tramposo: {cm_default[1][0]:>7d} | {cm_default[1][1]:>8d}", flush=True)
 
-print("\n--- Análisis con Curva ROC ---", flush=True)
-fpr, tpr, _ = roc_curve(y_true, y_pred_prob[:len(y_true)])
-auc_score = roc_auc_score(y_true, y_pred_prob[:len(y_true)])
-print(f"Área Bajo la Curva (AUC): {auc_score:.4f}", flush=True)
+print("\n--- Análisis con Curvas de Evaluación ---", flush=True)
+fpr, tpr, roc_thresholds = roc_curve(y_true, y_pred_prob_matched)
+auc_score = roc_auc_score(y_true, y_pred_prob_matched)
+print(f"Área Bajo la Curva ROC (AUC): {auc_score:.4f}", flush=True)
 
 plt.figure(figsize=(8, 8))
 plt.plot(fpr, tpr, label=f'Curva ROC (AUC = {auc_score:.2f})')
-plt.plot([0, 1], [0, 1], 'r--')
+plt.plot([0, 1], [0, 1], 'r--', label='Clasificador Aleatorio')
 plt.xlabel('Tasa de Falsos Positivos')
-plt.ylabel('Tasa de Verdaderos Positivos')
-plt.title('Curva ROC del Modelo Final')
+plt.ylabel('Tasa de Verdaderos Positivos (Recall)')
+plt.title('Curva ROC')
 plt.legend()
 plt.grid()
-plt.savefig('curva_roc.png')
+plt.savefig('curva_roc_final.png')
 plt.close()
-print("Curva ROC guardada.", flush=True)
+print("Curva ROC guardada como 'curva_roc_final.png'.", flush=True)
 
-print("\n--- Análisis con Curva Precisión-Recall ---", flush=True)
-precision, recall, _ = precision_recall_curve(y_true, y_pred_prob)
-avg_precision = average_precision_score(y_true, y_pred_prob)
+precision, recall, pr_thresholds = precision_recall_curve(y_true, y_pred_prob_matched)
+avg_precision = average_precision_score(y_true, y_pred_prob_matched)
 print(f"Precisión Promedio (AP): {avg_precision:.4f}", flush=True)
 
 plt.figure(figsize=(8, 8))
 plt.plot(recall, precision, label=f'Curva P-R (AP = {avg_precision:.2f})')
 plt.xlabel('Recall (Sensibilidad)')
 plt.ylabel('Precisión')
-plt.title('Curva Precisión-Recall del Modelo Final')
+plt.title('Curva Precisión-Recall')
 plt.legend()
 plt.grid()
 plt.savefig('curva_precision_recall_final.png')
 plt.close()
 print("Curva Precisión-Recall guardada.", flush=True)
+
+print("\n--- Paso 10: Calibración Automática del Umbral ---", flush=True)
+
+f1_scores = (2 * precision[:-1] * recall[:-1]) / (precision[:-1] + recall[:-1] + 1e-9)
+best_f1_idx = np.argmax(f1_scores)
+optimal_threshold = pr_thresholds[best_f1_idx]
+
+print(f"Umbral óptimo que maximiza el F1-Score: {optimal_threshold:.4f}", flush=True)
+print(f"Con este umbral, se logra una Precisión de {precision[best_f1_idx]:.2f} y un Recall de {recall[best_f1_idx]:.2f}", flush=True)
+
+y_pred_optimizado = (y_pred_prob_matched > optimal_threshold).astype(int)
+
+print("\n--- Reporte de Clasificación (con Umbral Optimizado) ---", flush=True)
+print(classification_report(y_true, y_pred_optimizado, target_names=['Legítimo (0)', 'Tramposo (1)']))
+
+cm_optimizado = confusion_matrix(y_true, y_pred_optimizado)
+print("\n--- Matriz de Confusión (con Umbral Optimizado) ---", flush=True)
+print(f"Real Legítimo: {cm_optimizado[0][0]:>7d} | {cm_optimizado[0][1]:>8d}", flush=True)
+print(f"Real Tramposo: {cm_optimizado[1][0]:>7d} | {cm_optimizado[1][1]:>8d}", flush=True)
 
 print("\n--- Proceso Completo Finalizado ---", flush=True)
