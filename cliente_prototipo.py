@@ -1,136 +1,256 @@
-import psutil
+import customtkinter as ctk
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import webbrowser
+import threading
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+import joblib
+import os
 import time
-import json
-import requests
-from pynput import mouse, keyboard
-import win32gui
-import win32process
 
-juego_en_ejecucion = False
-last_net_stats = None
-mouse_movements = []
-estado_jugador = {
-    'is_firing': False,
-    'is_scoped': False,
-    'is_walking': False,
-}
+# --- CONFIGURACIÓN Y RECURSOS ---
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("dark-blue")
+WINDOW_SIZE = 256 # El tamaño de la ventana (ticks) que el modelo espera
 
-def on_move(x, y):
-    if not juego_en_ejecucion: return
-    if hasattr(on_move, 'last_pos') and on_move.last_pos is not None:
-        dx = x - on_move.last_pos['x']
-        dy = y - on_move.last_pos['y']
-        mouse_movements.append({'dx': dx, 'dy': dy, 'ts': time.perf_counter()})
-    on_move.last_pos = {'x': x, 'y': y}
-on_move.last_pos = None
+class NeuralAntiCheatApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("CS2 Neural Anti-Cheat - Forensic Engine")
+        self.geometry("1200x800")
+        
+        # Cargar recursos de IA al iniciar
+        self.load_ia_resources()
 
-def on_click(x, y, button, pressed):
-    if not juego_en_ejecucion: return
-    if button == mouse.Button.left:
-        estado_jugador['is_firing'] = pressed
-    elif button == mouse.Button.right:
-        estado_jugador['is_scoped'] = pressed
+        # Layout
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-def on_press(key):
-    if not juego_en_ejecucion: return
-    if isinstance(key, keyboard.Key) and key.name.startswith('shift'):
-        estado_jugador['is_walking'] = True
+        # --- PANEL LATERAL ---
+        self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0)
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        
+        self.logo = ctk.CTkLabel(self.sidebar, text="🛡️ NEURAL\nANTI-CHEAT", font=ctk.CTkFont(size=24, weight="bold"))
+        self.logo.grid(row=0, column=0, padx=20, pady=(40, 20))
+        
+        self.btn_load = ctk.CTkButton(self.sidebar, text="ANALIZAR DEMO (.dem)", height=50,
+                                      fg_color="#c0392b", hover_color="#e74c3c", font=ctk.CTkFont(weight="bold"),
+                                      command=self.iniciar_analisis)
+        self.btn_load.grid(row=1, column=0, padx=20, pady=20)
 
-def on_release(key):
-    if not juego_en_ejecucion: return
-    if isinstance(key, keyboard.Key) and key.name.startswith('shift'):
-        estado_jugador['is_walking'] = False
+        self.lbl_status = ctk.CTkLabel(self.sidebar, text="SISTEMA LISTO", text_color="#2ecc71")
+        self.lbl_status.grid(row=2, column=0, padx=20, pady=10)
 
-mouse_move_listener = mouse.Listener(on_move=on_move, on_click=on_click)
-keyboard_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-mouse_move_listener.start()
-keyboard_listener.start()
+        # --- PANEL PRINCIPAL ---
+        self.main_view = ctk.CTkScrollableFrame(self, label_text="REPORTE DE DETECCIÓN")
+        self.main_view.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
 
-def actualizar_estado_juego():
-    global juego_en_ejecucion
-    proceso_encontrado = "cs2.exe" in (p.name() for p in psutil.process_iter())
-    ventana_activa = False
-    if proceso_encontrado:
+    def load_ia_resources(self):
+        """Carga el modelo, escalador y lista de columnas."""
         try:
-            pid = win32process.GetWindowThreadProcessId(win32gui.GetForegroundWindow())
-            proceso_activo = psutil.Process(pid[-1]).name()
-            if proceso_activo == "cs2.exe":
-                ventana_activa = True
-        except (psutil.NoSuchProcess, KeyError):
-            pass
-    estado_actual = proceso_encontrado and ventana_activa
-    if estado_actual and not juego_en_ejecucion:
-        print("¡Juego CS2 detectado y en primer plano! Iniciando recolección de datos...")
-    elif not estado_actual and juego_en_ejecucion:
-        print("El juego CS2 se ha cerrado o ya no está en primer plano. Pausando recolección.")
-    juego_en_ejecucion = estado_actual
+            # Archivos clave
+            model_path = 'anticheat_model_kill_focused.keras'
+            scaler_path = 'scaler_entrenado.pkl'
+            cols_path = 'columnas_numericas.pkl'
+            
+            self.model = tf.keras.models.load_model(model_path)
+            self.scaler = joblib.load(scaler_path)
+            self.numeric_cols = joblib.load(cols_path)
+            
+            self.lbl_status.configure(text="✅ MODELO CARGADO", text_color="#2ecc71")
+            print("Recursos cargados correctamente.")
+        except Exception as e:
+            messagebox.showerror("Error de Carga", f"Faltan archivos clave: {e}. Asegúrate de tener {model_path}, {scaler_path} y {cols_path} en esta carpeta.")
+            self.model = None
 
-def obtener_datos_de_red(intervalo):
-    global last_net_stats
-    datos_red = {
-        'ip_servidor': None,
-        'puerto_servidor': None,
-        'ubicacion_servidor': 'Desconocida',
-        'kb_enviados_s': 0,
-        'kb_recibidos_s': 0
-    }
-    for proc in psutil.process_iter(['pid', 'name']):
-        if 'cs2.exe' in proc.info['name']:
-            try:
-                conexiones = proc.net_connections(kind='inet')
-                for conn in conexiones:
-                    if conn.status == psutil.CONN_ESTABLISHED and conn.raddr:
-                        datos_red['ip_servidor'] = conn.raddr.ip
-                        datos_red['puerto_servidor'] = conn.raddr.port
-                        break
-                if datos_red['ip_servidor']:
-                    break
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+    def iniciar_analisis(self):
+        if not self.model:
+            messagebox.showwarning("Advertencia", "Modelo no cargado. No se puede analizar.")
+            return
 
-    if datos_red['ip_servidor']:
+        file_path = filedialog.askopenfilename(filetypes=[("CS2 Demos", "*.dem")])
+        if file_path:
+            self.lbl_status.configure(text="🟡 PROCESANDO DEMO...", text_color="#f39c12")
+            self.btn_load.configure(state="disabled")
+            threading.Thread(target=self.pipeline_analisis, args=(file_path,)).start()
+
+    def procesar_demo_real(self, file_path):
+        """
+        [ATENCIÓN: FUNCIÓN PUENTE]
+        Esta función simula la salida de un parser real.
+        El usuario debe integrar aquí el código de awpy/demoparser para devolver
+        un DataFrame con la telemetría de cada tick.
+        """
+        print(f"Iniciando parser para: {file_path}")
+        time.sleep(1.0) 
+        
+        # --- ESTRUCTURA DE DATOS REQUERIDA ---
+        # Este DataFrame debe ser la salida del parser, donde cada fila es un kill.
+        # En una demo real, el parser nos daría:
+        
+        # Simulación de la Salida de un Parser (para fines de ejecución de la App)
+        datos_simulados = []
+        jugadores = [
+            {"steamid": "76561198000000002", "nombre": "SpinBot_User_1337", "kills": 42},
+            {"steamid": "76561198000000004", "nombre": "Closet_Cheater_X", "kills": 28},
+            {"steamid": "76561198000000001", "nombre": "S1mple_Wannabe", "kills": 25},
+        ]
+        
+        for jugador in jugadores:
+            # Simular 3 ventanas de contexto por jugador (3 kills sospechosas)
+            for i in range(3):
+                 datos_simulados.append({
+                    'steamid': jugador['steamid'],
+                    'nombre': jugador['nombre'],
+                    'kills_totales_partida': jugador['kills'],
+                    # Simular tensor de 256 ticks, con valores aleatorios para que la IA prediga.
+                    # Estos valores DEBEN ser reales y sin escalar en producción.
+                    'window_data': np.random.rand(WINDOW_SIZE, len(self.numeric_cols)) 
+                 })
+
+        return pd.DataFrame(datos_simulados)
+
+
+    def pipeline_analisis(self, file_path):
+        """Ejecuta el flujo completo de Inferencia."""
         try:
-            response = requests.get(f"https://ipinfo.io/{datos_red['ip_servidor']}/json", timeout=1)
-            if response.status_code == 200:
-                geo_data = response.json()
-                city = geo_data.get('city', '')
-                country = geo_data.get('country', '')
-                datos_red['ubicacion_servidor'] = f"{city}, {country}"
-        except requests.exceptions.RequestException:
-            datos_red['ubicacion_servidor'] = 'Fallo en geolocalización'
+            self.lbl_status.configure(text="🟡 PARSING y EXTRACCIÓN...", text_color="#f39c12")
+            
+            # 1. PARSING REAL (Función a reemplazar por el usuario)
+            df_raw_windows = self.procesar_demo_real(file_path) 
+            
+            # 2. PREPROCESAMIENTO -> Obtener tensores listos para la IA
+            self.lbl_status.configure(text="🟠 ESCALANDO Y FORMATEANDO...", text_color="#e67e22")
+            X_windows_scaled, meta_info = self.preparar_datos_para_modelo(df_raw_windows)
 
-    current_net_stats = psutil.net_io_counters()
-    if last_net_stats is not None:
-        bytes_enviados = current_net_stats.bytes_sent - last_net_stats.bytes_sent
-        bytes_recibidos = current_net_stats.bytes_recv - last_net_stats.bytes_recv
-        datos_red['kb_enviados_s'] = (bytes_enviados / 1024) / intervalo
-        datos_red['kb_recibidos_s'] = (bytes_recibidos / 1024) / intervalo
-    last_net_stats = current_net_stats
-    return datos_red
+            # 3. INFERENCIA
+            self.lbl_status.configure(text="🔴 EJECUTANDO NEURAL ENGINE...", text_color="#c0392b")
+            predicciones = self.model.predict(X_windows_scaled)
+            
+            # 4. AGRUPAR RESULTADOS Y VEREDICTO
+            self.lbl_status.configure(text="🟣 AGREGANDO RESULTADOS...", text_color="#8e44ad")
+            resultados_finales = self.agrupar_resultados(predicciones, meta_info)
+            
+            # 5. ACTUALIZAR UI
+            self.after(0, lambda: self.mostrar_resultados(resultados_finales))
+            self.after(0, lambda: self.reset_ui())
 
-print("Cliente anti-cheat unificado iniciado. Presiona Ctrl+C para detener.")
-INTERVALO_SEGUNDOS = 5
+        except Exception as e:
+            print(f"Error en pipeline: {e}")
+            self.after(0, lambda: self.lbl_status.configure(text=f"❌ ERROR: {e}", text_color="red"))
+            self.after(0, lambda: self.btn_load.configure(state="normal"))
 
-try:
-    while True:
-        actualizar_estado_juego()
-        if juego_en_ejecucion:
-            datos_red_intervalo = obtener_datos_de_red(INTERVALO_SEGUNDOS)
-            datos_raton_intervalo = list(mouse_movements)
-            mouse_movements.clear()
-            paquete_de_datos = {
-                "timestamp_utc": time.time(),
-                "network_data": datos_red_intervalo,
-                "player_state": estado_jugador.copy(),
-                "mouse_data": datos_raton_intervalo
-            }
-            json_para_procesar = json.dumps(paquete_de_datos, indent=4)
-            print("--- PAQUETE DE DATOS UNIFICADO LISTO PARA EL MOTOR DE IA ---")
-            print(json_para_procesar)
-        else:
-            print(f"CS2 no detectado en primer plano. Esperando...")
-        time.sleep(INTERVALO_SEGUNDOS)
-except KeyboardInterrupt:
-    mouse_move_listener.stop()
-    keyboard_listener.stop()
-    print("\nCliente detenido por el usuario.")
+    def preparar_datos_para_modelo(self, df_raw_windows):
+        """Escala y prepara los tensores para Keras."""
+        X_list = []
+        meta_info = []
+
+        for index, row in df_raw_windows.iterrows():
+            # Simulación: En producción, aquí aplicaríamos One-Hot Encoding si fuera necesario
+            
+            # 1. Escalar (CRÍTICO: Usar el scaler entrenado)
+            # Reestructuramos la ventana para que sea 2D para el scaler, y luego 3D para el modelo
+            window_2d = row['window_data'].reshape(-1, len(self.numeric_cols))
+            window_scaled_2d = self.scaler.transform(window_2d)
+            window_scaled_3d = window_scaled_2d.reshape(1, WINDOW_SIZE, len(self.numeric_cols))
+            
+            X_list.append(window_scaled_3d[0])
+            meta_info.append({"steamid": row['steamid'], "nombre": row['nombre'], "kills_totales_partida": row['kills_totales_partida']})
+
+        return np.array(X_list), meta_info
+
+    def agrupar_resultados(self, predicciones, meta_info):
+        """Agrega las predicciones por jugador y calcula el 'CSWatch' (Score Estadístico)."""
+        jugadores = {}
+        UMBRAL_STRICTO = 0.80 # Umbral para el veredicto final
+
+        for i, pred in enumerate(predicciones):
+            info = meta_info[i]
+            sid = info['steamid']
+            prob = pred[0]
+            
+            if sid not in jugadores:
+                jugadores[sid] = {"nombre": info['nombre'], "probs": [], "kills_totales_partida": info['kills_totales_partida']}
+            jugadores[sid]["probs"].append(prob)
+
+        reporte = []
+        for sid, data in jugadores.items():
+            max_prob = np.max(data["probs"])
+            avg_prob = np.mean(data["probs"])
+            
+            # Calculo del CSWatch Score (Ejemplo: Promedio ponderado de probabilidad y kills)
+            # Un score simple que el usuario puede refinar
+            score_ponderado_cswatch = (max_prob * 0.7) + (avg_prob * 0.3) 
+            
+            reporte.append({
+                "steamid": sid,
+                "nombre": data["nombre"],
+                "probabilidad_max": max_prob,
+                "veredicto": max_prob >= UMBRAL_STRICTO, # Veredicto con umbral estricto
+                "cswatch_score": score_ponderado_cswatch,
+                "kills_analizadas": len(data["probs"]),
+                "kills_totales_partida": data["kills_totales_partida"]
+            })
+            
+        return reporte
+
+    def reset_ui(self):
+        self.lbl_status.configure(text="✅ ANÁLISIS COMPLETADO", text_color="#2ecc71")
+        self.btn_load.configure(state="normal")
+
+    def mostrar_resultados(self, datos):
+        for widget in self.main_view.winfo_children():
+            widget.destroy()
+
+        datos_ordenados = sorted(datos, key=lambda x: x['probabilidad_max'], reverse=True)
+
+        for jugador in datos_ordenados:
+            self.crear_tarjeta(jugador)
+
+    def crear_tarjeta(self, data):
+        color = "#e74c3c" if data["veredicto"] else "#27ae60"
+        texto = "⚠️ DETECTADO" if data["veredicto"] else "✓ LIMPIO"
+        
+        card = ctk.CTkFrame(self.main_view, border_width=2, border_color=color)
+        card.pack(fill="x", padx=10, pady=5)
+
+        # Columna 1: Identidad
+        ctk.CTkLabel(card, text=data["nombre"], font=("Arial", 16, "bold")).pack(anchor="w", padx=10, pady=(10,0))
+        ctk.CTkLabel(card, text=f"ID: {data['steamid']}", font=("Arial", 10)).pack(anchor="w", padx=10)
+        
+        # Columna 2: Métricas del Modelo
+        stats = ctk.CTkFrame(card, fg_color="transparent")
+        stats.pack(side="left", padx=40)
+        
+        prob_pct = data["probabilidad_max"] * 100
+        
+        ctk.CTkLabel(stats, text=texto, text_color=color, font=("Arial", 16, "bold")).pack()
+        
+        # Barra de progreso
+        progress = ctk.CTkProgressBar(stats, width=150, height=10, progress_color=color)
+        progress.set(data["probabilidad_max"])
+        progress.pack(pady=5)
+        
+        ctk.CTkLabel(stats, text=f"Confianza IA: {prob_pct:.1f}% | Kills Analizadas: {data['kills_analizadas']}").pack()
+        ctk.CTkLabel(stats, text=f"Score Ponderado (CSWatch): {data['cswatch_score']:.2f}", text_color="#3498db").pack()
+
+        # Columna 3: Herramientas Externas
+        links = ctk.CTkFrame(card, fg_color="transparent")
+        links.pack(side="right", padx=20, pady=10)
+        
+        sid = data['steamid']
+        
+        self.btn_link(links, "Leetify", "#e812f3", f"https://leetify.com/public/profile/{sid}")
+        self.btn_link(links, "CSStats", "#3498db", f"https://csstats.gg/player/{sid}")
+        self.btn_link(links, "Steam", "#95a5a6", f"https://steamcommunity.com/profiles/{sid}")
+
+    def btn_link(self, parent, txt, color, url):
+        ctk.CTkButton(parent, text=txt, width=80, height=24, fg_color="transparent", 
+                      border_width=1, border_color=color, text_color=color,
+                      command=lambda: webbrowser.open(url)).pack(side="left", padx=5)
+
+if __name__ == "__main__":
+    app = NeuralAntiCheatApp()
+    app.mainloop()

@@ -4,7 +4,6 @@ import time
 import os
 import gc
 import joblib
-import random
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import classification_report, confusion_matrix, roc_curve, roc_auc_score, precision_recall_curve, average_precision_score
@@ -18,62 +17,23 @@ import matplotlib.pyplot as plt
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-print("--- Iniciando Proceso con Muestreo Estratificado Balanceado ---", flush=True)
-LEGITIMOS_SAMPLE = 2000000
-TRAMPOSOS_SAMPLE = 1000000
+print("--- Iniciando Proceso ---", flush=True)
+print("ADVERTENCIA: Este script intenta cargar todo el dataset en memoria.", flush=True)
+print("Si tienes problemas de memoria, usa 'modeloCS2umbral.py' en su lugar.", flush=True)
 
-print(f"\nPaso 1: Cargando muestra balanceada del dataset...", flush=True)
+print("\nPaso 1: Cargando dataset completo...", flush=True)
 try:
-    print("  Cargando dataset completo para filtrar por clase...", flush=True)
-    
-    print("  Identificando filas de legítimos y tramposos...", flush=True)
-    legitimos_indices = []
-    tramposos_indices = []
-    
-    chunk_size = 500000
-    row_offset = 0
-    
-    for chunk in pd.read_csv('subset_cs2cd.csv', chunksize=chunk_size, low_memory=False):
-        legitimos_chunk = chunk[chunk['is_cheater'] == 0].index + row_offset
-        tramposos_chunk = chunk[chunk['is_cheater'] == 1].index + row_offset
-        
-        legitimos_indices.extend(legitimos_chunk.tolist())
-        tramposos_indices.extend(tramposos_chunk.tolist())
-        
-        row_offset += len(chunk)
-        
-        if len(legitimos_indices) >= LEGITIMOS_SAMPLE and len(tramposos_indices) >= TRAMPOSOS_SAMPLE:
-            break
-    
-    print(f"  Encontrados: {len(legitimos_indices):,} legítimos, {len(tramposos_indices):,} tramposos", flush=True)
- 
-    random.seed(42)
-    
-    legitimos_sample = random.sample(legitimos_indices, min(LEGITIMOS_SAMPLE, len(legitimos_indices)))
-    tramposos_sample = random.sample(tramposos_indices, min(TRAMPOSOS_SAMPLE, len(tramposos_indices)))
-    
-    selected_indices = set(legitimos_sample + tramposos_sample)
-    
-    print(f"  Seleccionados: {len(legitimos_sample):,} legítimos + {len(tramposos_sample):,} tramposos", flush=True)
-    print(f"  Releyendo dataset con índices seleccionados...", flush=True)
-    
-    df = pd.read_csv('subset_cs2cd.csv', skiprows=lambda x: x > 0 and (x-1) not in selected_indices, low_memory=False)
-    
-    print(f"✅ Muestra balanceada cargada. Forma: {df.shape}", flush=True)
-    
-    if 'is_cheater' in df.columns:
-        legitimos = len(df[df['is_cheater']==0])
-        tramposos = len(df[df['is_cheater']==1])
-        print(f"   Distribución final: Legítimos={legitimos:,}, Tramposos={tramposos:,}", flush=True)
-        print(f"   Ratio: {legitimos/max(1,tramposos):.2f}:1 (legítimos:tramposos)", flush=True)
-    
+    df = pd.read_csv('subset_cs2cd.csv', low_memory=False)
+    print(f"Dataset completo cargado. Forma: {df.shape}", flush=True)
 except FileNotFoundError:
     print("Error: No se encontró el archivo dataset.", flush=True)
     exit()
+except MemoryError:
+    print("\nERROR: Memoria RAM insuficiente para cargar dataset completo.", flush=True)
+    print("   Solución: Ejecuta 'modeloCS2umbral.py' que usa solo 3M filas.", flush=True)
+    exit()
 except Exception as e:
     print(f"Error al cargar dataset: {e}", flush=True)
-    import traceback
-    traceback.print_exc()
     exit()
 
 print("\nPaso 2: Limpieza y preprocesamiento...", flush=True)
@@ -109,7 +69,6 @@ columnas_categoricas_eliminar = ['map', 'server', 'avg_rank', 'match_making_type
 df = df.drop(columns=columnas_categoricas_eliminar, errors='ignore')
 
 df_cleaned = df.drop(columns=['spotted', 'approximate_spotted_by'], errors='ignore')
-
 cols = df_cleaned.columns
 if cols.duplicated().any():
     df_cleaned = df_cleaned.loc[:, ~cols.duplicated()]
@@ -127,7 +86,7 @@ X = df_cleaned[features]
 y = df_cleaned['is_cheater']
 groups = df_cleaned['steamid']
 joblib.dump(features, 'columnas_numericas.pkl')
-print(f"Columnas del modelo guardadas: {len(features)} features", flush=True)
+print(f"✅ Columnas del modelo guardadas: {len(features)} features", flush=True)
 
 gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
 train_idx, test_idx = next(gss.split(X, y, groups))
@@ -144,9 +103,7 @@ print("\nPaso 5: Escalando características...", flush=True)
 scaler = MinMaxScaler()
 X_train_scaled = scaler.fit_transform(X_train).astype('float32')
 X_test_scaled = scaler.transform(X_test).astype('float32')
-
-joblib.dump(scaler, 'scaler_entrenado.pkl')
-print("✅ Scaler guardado como 'scaler_entrenado.pkl'", flush=True)
+print("Scaler guardado como 'scaler_entrenado.pkl'", flush=True)
 
 print("\nPaso 6: Creando ventanas de contexto (clips) alrededor de los kills...", flush=True)
 WINDOW_BEFORE = 224
@@ -178,12 +135,11 @@ print("Liberando memoria de dataframes originales...", flush=True)
 del df, df_cleaned, X, y, X_train, X_test, y_train, y_test, X_train_scaled, X_test_scaled, kill_ilocs_train, kill_ilocs_test
 gc.collect()
 
-print("\nPaso 7: Calculando pesos de clase...", flush=True)
+print("\nPaso 8: Construyendo arquitectura del modelo...", flush=True)
 weights = class_weight.compute_class_weight('balanced', classes=np.unique(y_train_windows), y=y_train_windows)
 class_weights = dict(enumerate(weights))
-print(f"Pesos de clase calculados: {class_weights}", flush=True)
+print(f"Pesos de clase (para ventanas) calculados: {class_weights}", flush=True)
 
-print("\nPaso 8: Construyendo arquitectura del modelo (KILL-FOCUSED)...", flush=True)
 num_features = X_train_windows.shape[2]
 
 model = Sequential([
@@ -201,7 +157,7 @@ model = Sequential([
 model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 model.summary()
 
-print("\nPaso 9: Entrenando el modelo (sobre ventanas de contexto centradas en kills)...", flush=True)
+print("\nPaso 9: Entrenando el modelo (sobre ventanas de contexto)...", flush=True)
 history = model.fit(
     X_train_windows, 
     y_train_windows,
@@ -215,75 +171,64 @@ print("¡Entrenamiento completado!", flush=True)
 model.save('anticheat_model_kill_focused.keras')
 print("Modelo guardado.", flush=True)
 
-print("\nPaso 10: Evaluando el rendimiento del modelo...", flush=True)
+print("\nPaso 10: Evaluando el rendimiento...", flush=True)
 y_pred_prob = model.predict(X_test_windows)
 y_true = y_test_windows
 
-print("\n--- Reporte de Clasificación con Umbral 0.8 ---", flush=True)
-y_pred_default = (y_pred_prob > 0.8).astype(int).flatten()
-print(classification_report(y_true, y_pred_default, target_names=['Legítimo (0)', 'Tramposo (1)'], zero_division=0))
+print("\n--- Reporte de Clasificación (Umbral 0.8) ---", flush=True)
+y_pred_default = (y_pred_prob > 0.8).astype(int)
+print(classification_report(y_true, y_pred_default, target_names=['Legítimo (0)', 'Tramposo (1)']))
 
 cm_default = confusion_matrix(y_true, y_pred_default)
 print("\n--- Matriz de Confusión (Umbral 0.8) ---", flush=True)
-if cm_default.shape == (2, 2):
-    print(f"Real Legítimo: {cm_default[0][0]:>7d} | {cm_default[0][1]:>8d}", flush=True)
-    print(f"Real Tramposo: {cm_default[1][0]:>7d} | {cm_default[1][1]:>8d}", flush=True)
-else:
-    print(f"Matriz reducida: {cm_default}", flush=True)
+print(f"Real Legítimo: {cm_default[0][0]:>7d} | {cm_default[0][1]:>8d}", flush=True)
+print(f"Real Tramposo: {cm_default[1][0]:>7d} | {cm_default[1][1]:>8d}", flush=True)
 
-print("\n--- Análisis con Curva ROC ---", flush=True)
+print("\n--- Análisis con Curvas de Evaluación ---", flush=True)
 fpr, tpr, roc_thresholds = roc_curve(y_true, y_pred_prob)
 auc_score = roc_auc_score(y_true, y_pred_prob)
 print(f"Área Bajo la Curva ROC (AUC): {auc_score:.4f}", flush=True)
 
 plt.figure(figsize=(8, 8))
-plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {auc_score:.2f})')
-plt.plot([0, 1], [0, 1], 'r--', label='Random Classifier')
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate (Recall)')
-plt.title('ROC Curve')
+plt.plot(fpr, tpr, label=f'Curva ROC (AUC = {auc_score:.2f})')
+plt.plot([0, 1], [0, 1], 'r--', label='Clasificador Aleatorio')
+plt.xlabel('Tasa de Falsos Positivos')
+plt.ylabel('Tasa de Verdaderos Positivos (Recall)')
+plt.title('Curva ROC (Enfoque Kills)')
 plt.legend()
 plt.grid()
-plt.savefig('curva_roc_final.png')
+plt.savefig('curva_roc_kills.png')
 plt.close()
-print("Curva ROC guardada como 'curva_roc_final.png'.", flush=True)
+print("Curva ROC guardada como 'curva_roc_kills.png'.", flush=True)
 
-print("\n--- Análisis con Curva Precisión-Recall ---", flush=True)
 precision, recall, pr_thresholds = precision_recall_curve(y_true, y_pred_prob)
 avg_precision = average_precision_score(y_true, y_pred_prob)
 print(f"Precisión Promedio (AP): {avg_precision:.4f}", flush=True)
 
 plt.figure(figsize=(8, 8))
-plt.plot(recall, precision, label=f'P-R Curve (AP = {avg_precision:.2f})')
-plt.xlabel('Recall')
-plt.ylabel('Precision')
-plt.title('P-R Curve')
+plt.plot(recall, precision, label=f'Curva P-R (AP = {avg_precision:.2f})')
+plt.xlabel('Recall (Sensibilidad)')
+plt.ylabel('Precisión')
+plt.title('Curva Precisión-Recall (Enfoque Kills)')
 plt.legend()
 plt.grid()
-plt.savefig('curva_precision_recall_final.png')
+plt.savefig('curva_precision_recall_kills.png')
 plt.close()
-print("Curva Precisión-Recall guardada.", flush=True)
+print("Curva Precisión-Recall guardada como 'curva_precision_recall_kills.png'.", flush=True)
 
 print("\n--- Paso 11: Calibración Automática del Umbral ---", flush=True)
-
 f1_scores = (2 * precision[:-1] * recall[:-1]) / (precision[:-1] + recall[:-1] + 1e-9)
 best_f1_idx = np.argmax(f1_scores)
 optimal_threshold = pr_thresholds[best_f1_idx]
-
 print(f"Umbral óptimo que maximiza el F1-Score: {optimal_threshold:.4f}", flush=True)
-print(f"Con este umbral, se logra una Precisión de {precision[best_f1_idx]:.2f} y un Recall de {recall[best_f1_idx]:.2f}", flush=True)
 
-y_pred_optimizado = (y_pred_prob > optimal_threshold).astype(int).flatten()
-
-print("\n--- Reporte de Clasificación con Umbral Optimizado ---", flush=True)
-print(classification_report(y_true, y_pred_optimizado, target_names=['Legítimo (0)', 'Tramposo (1)'], zero_division=0))
+y_pred_optimizado = (y_pred_prob > optimal_threshold).astype(int)
+print("\n--- Reporte de Clasificación (con Umbral Optimizado) ---", flush=True)
+print(classification_report(y_true, y_pred_optimizado, target_names=['Legítimo (0)', 'Tramposo (1)']))
 
 cm_optimizado = confusion_matrix(y_true, y_pred_optimizado)
-print("\n--- Matriz de Confusión con Umbral Optimizado ---", flush=True)
-if cm_optimizado.shape == (2, 2):
-    print(f"Real Legítimo: {cm_optimizado[0][0]:>7d} | {cm_optimizado[0][1]:>8d}", flush=True)
-    print(f"Real Tramposo: {cm_optimizado[1][0]:>7d} | {cm_optimizado[1][1]:>8d}", flush=True)
-else:
-    print(f"Matriz reducida: {cm_optimizado}", flush=True)
+print("\n--- Matriz de Confusión (con Umbral Optimizado) ---", flush=True)
+print(f"Real Legítimo: {cm_optimizado[0][0]:>7d} | {cm_optimizado[0][1]:>8d}", flush=True)
+print(f"Real Tramposo: {cm_optimizado[1][0]:>7d} | {cm_optimizado[1][1]:>8d}", flush=True)
 
 print("\n--- Proceso Completo Finalizado ---", flush=True)
