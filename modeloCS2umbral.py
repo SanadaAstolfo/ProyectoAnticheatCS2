@@ -59,7 +59,7 @@ try:
     
     df = pd.read_csv('subset_cs2cd.csv', skiprows=lambda x: x > 0 and (x-1) not in selected_indices, low_memory=False)
     
-    print(f"✅ Muestra balanceada cargada. Forma: {df.shape}", flush=True)
+    print(f"Muestra balanceada cargada. Forma: {df.shape}", flush=True)
     
     if 'is_cheater' in df.columns:
         legitimos = len(df[df['is_cheater']==0])
@@ -146,7 +146,7 @@ X_train_scaled = scaler.fit_transform(X_train).astype('float32')
 X_test_scaled = scaler.transform(X_test).astype('float32')
 
 joblib.dump(scaler, 'scaler_entrenado.pkl')
-print("✅ Scaler guardado como 'scaler_entrenado.pkl'", flush=True)
+print("Scaler guardado como 'scaler_entrenado.pkl'", flush=True)
 
 print("\nPaso 6: Creando ventanas de contexto (clips) alrededor de los kills...", flush=True)
 WINDOW_BEFORE = 224

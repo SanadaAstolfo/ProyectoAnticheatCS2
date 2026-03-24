@@ -86,7 +86,7 @@ X = df_cleaned[features]
 y = df_cleaned['is_cheater']
 groups = df_cleaned['steamid']
 joblib.dump(features, 'columnas_numericas.pkl')
-print(f"✅ Columnas del modelo guardadas: {len(features)} features", flush=True)
+print(f"Columnas del modelo guardadas: {len(features)} features", flush=True)
 
 gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
 train_idx, test_idx = next(gss.split(X, y, groups))

@@ -32,7 +32,7 @@ class NeuralAntiCheatApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=250, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         
-        self.logo = ctk.CTkLabel(self.sidebar, text="🛡️ NEURAL\nANTI-CHEAT", font=ctk.CTkFont(size=24, weight="bold"))
+        self.logo = ctk.CTkLabel(self.sidebar, text="NEURAL\nANTI-CHEAT", font=ctk.CTkFont(size=24, weight="bold"))
         self.logo.grid(row=0, column=0, padx=20, pady=(40, 20))
         
         self.btn_load = ctk.CTkButton(self.sidebar, text="ANALIZAR DEMO (.dem)", height=50,
@@ -59,7 +59,7 @@ class NeuralAntiCheatApp(ctk.CTk):
             self.scaler = joblib.load(scaler_path)
             self.numeric_cols = joblib.load(cols_path)
             
-            self.lbl_status.configure(text="✅ MODELO CARGADO", text_color="#2ecc71")
+            self.lbl_status.configure(text="MODELO CARGADO", text_color="#2ecc71")
             print("Recursos cargados correctamente.")
         except Exception as e:
             messagebox.showerror("Error de Carga", f"Faltan archivos clave: {e}. Asegúrate de tener {model_path}, {scaler_path} y {cols_path} en esta carpeta.")
@@ -72,7 +72,7 @@ class NeuralAntiCheatApp(ctk.CTk):
 
         file_path = filedialog.askopenfilename(filetypes=[("CS2 Demos", "*.dem")])
         if file_path:
-            self.lbl_status.configure(text="🟡 PROCESANDO DEMO...", text_color="#f39c12")
+            self.lbl_status.configure(text="PROCESANDO DEMO...", text_color="#f39c12")
             self.btn_load.configure(state="disabled")
             threading.Thread(target=self.pipeline_analisis, args=(file_path,)).start()
 
@@ -116,21 +116,21 @@ class NeuralAntiCheatApp(ctk.CTk):
     def pipeline_analisis(self, file_path):
         """Ejecuta el flujo completo de Inferencia."""
         try:
-            self.lbl_status.configure(text="🟡 PARSING y EXTRACCIÓN...", text_color="#f39c12")
+            self.lbl_status.configure(text="PARSING y EXTRACCIÓN...", text_color="#f39c12")
             
             # 1. PARSING REAL (Función a reemplazar por el usuario)
             df_raw_windows = self.procesar_demo_real(file_path) 
             
             # 2. PREPROCESAMIENTO -> Obtener tensores listos para la IA
-            self.lbl_status.configure(text="🟠 ESCALANDO Y FORMATEANDO...", text_color="#e67e22")
+            self.lbl_status.configure(text="ESCALANDO Y FORMATEANDO...", text_color="#e67e22")
             X_windows_scaled, meta_info = self.preparar_datos_para_modelo(df_raw_windows)
 
             # 3. INFERENCIA
-            self.lbl_status.configure(text="🔴 EJECUTANDO NEURAL ENGINE...", text_color="#c0392b")
+            self.lbl_status.configure(text="EJECUTANDO NEURAL ENGINE...", text_color="#c0392b")
             predicciones = self.model.predict(X_windows_scaled)
             
             # 4. AGRUPAR RESULTADOS Y VEREDICTO
-            self.lbl_status.configure(text="🟣 AGREGANDO RESULTADOS...", text_color="#8e44ad")
+            self.lbl_status.configure(text="AGREGANDO RESULTADOS...", text_color="#8e44ad")
             resultados_finales = self.agrupar_resultados(predicciones, meta_info)
             
             # 5. ACTUALIZAR UI
@@ -139,7 +139,7 @@ class NeuralAntiCheatApp(ctk.CTk):
 
         except Exception as e:
             print(f"Error en pipeline: {e}")
-            self.after(0, lambda: self.lbl_status.configure(text=f"❌ ERROR: {e}", text_color="red"))
+            self.after(0, lambda: self.lbl_status.configure(text=f" ERROR: {e}", text_color="red"))
             self.after(0, lambda: self.btn_load.configure(state="normal"))
 
     def preparar_datos_para_modelo(self, df_raw_windows):
@@ -197,7 +197,7 @@ class NeuralAntiCheatApp(ctk.CTk):
         return reporte
 
     def reset_ui(self):
-        self.lbl_status.configure(text="✅ ANÁLISIS COMPLETADO", text_color="#2ecc71")
+        self.lbl_status.configure(text="ANÁLISIS COMPLETADO", text_color="#2ecc71")
         self.btn_load.configure(state="normal")
 
     def mostrar_resultados(self, datos):
@@ -211,7 +211,7 @@ class NeuralAntiCheatApp(ctk.CTk):
 
     def crear_tarjeta(self, data):
         color = "#e74c3c" if data["veredicto"] else "#27ae60"
-        texto = "⚠️ DETECTADO" if data["veredicto"] else "✓ LIMPIO"
+        texto = "DETECTADO" if data["veredicto"] else "LIMPIO"
         
         card = ctk.CTkFrame(self.main_view, border_width=2, border_color=color)
         card.pack(fill="x", padx=10, pady=5)

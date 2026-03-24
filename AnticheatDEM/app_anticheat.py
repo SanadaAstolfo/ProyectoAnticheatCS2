@@ -670,7 +670,6 @@ class CS2UltimateAuditor(ctk.CTk):
         row.pack_propagate(False)
 
         name_color = COLOR_ACCENT_RED if is_cheater else "white"
-        icon = "⚠️ " if is_cheater else ""
         
         diff = data['k'] - data['d']
         diff_str = f"+{diff}" if diff > 0 else str(diff)
@@ -678,7 +677,6 @@ class CS2UltimateAuditor(ctk.CTk):
         hs_pct = int((data['hs'] / data['k']) * 100) if data['k'] > 0 else 0
 
         self.add_cell(row, str(data['rank']), W_RANK, "center", "gray", font_size=9)
-        self.add_cell(row, f"{icon}{data['name']}", W_NAME, "w", name_color, font_size=13, bold=True)
         self.add_cell(row, str(data['k']), W_STAT, "center")
         self.add_cell(row, str(data['d']), W_STAT, "center")
         self.add_cell(row, str(data['a']), W_STAT, "center")
